@@ -18,8 +18,12 @@
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -34,6 +38,9 @@ using QuickLook.Common.Annotations;
 using QuickLook.Common.ExtensionMethods;
 using QuickLook.Common.Helpers;
 using QuickLook.Common.Plugin;
+using PixelFormat = System.Drawing.Imaging.PixelFormat;
+using Point = System.Windows.Point;
+using Size = System.Windows.Size;
 
 namespace QuickLook.Plugin.ImageViewer
 {
@@ -49,6 +56,7 @@ namespace QuickLook.Plugin.ImageViewer
         private bool _isZoomFactorFirstSet = true;
         private DateTime _lastZoomTime = DateTime.MinValue;
         private double _maxZoomFactor = 3d;
+        private Visibility _channelSelectVisibility = Visibility.Visible;
         private MetaProvider _meta;
         private Visibility _metaIconVisibility = Visibility.Visible;
         private double _minZoomFactor = 0.1d;
@@ -67,6 +75,8 @@ namespace QuickLook.Plugin.ImageViewer
 
             Resources.MergedDictionaries.Clear();
 
+            channelComboBox.SelectionChanged += OnChannelComboBoxSelectionChanged;
+            
             buttonMeta.Click += (sender, e) =>
                 textMeta.Visibility = textMeta.Visibility == Visibility.Collapsed
                     ? Visibility.Visible
@@ -148,6 +158,16 @@ namespace QuickLook.Plugin.ImageViewer
             set
             {
                 _zoomToFit = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public Visibility ChannelSelectVisibility
+        {
+            get => _channelSelectVisibility;
+            set
+            {
+                _channelSelectVisibility = value;
                 OnPropertyChanged();
             }
         }
@@ -273,6 +293,141 @@ namespace QuickLook.Plugin.ImageViewer
         }
 
         public event PropertyChangedEventHandler PropertyChanged;
+
+        private BitmapSource originalSource;
+        
+        // TODO: export
+        private enum Channel
+        {
+            Default = -1,
+            Blue    =  0,
+            Green   =  1,
+            Red     =  2,
+            Alpha   =  3
+        }
+        
+        private void OnChannelComboBoxSelectionChanged(object sender, RoutedEventArgs e)
+        {
+            var comboBox = (ComboBox)sender;
+            var selectedItem = (ComboBoxItem)comboBox.SelectedItem;
+            int channelIndex = int.Parse(selectedItem.Tag .ToString());
+            if (channelIndex == (int)Channel.Default)
+            {
+                viewPanelImage.Source = originalSource;
+                OnPropertyChanged();
+                return;
+            }
+            
+            if (originalSource == null)
+            {
+                originalSource = (BitmapSource)viewPanelImage.Source;
+            }
+            
+            var bitmap = BitmapFromSource(originalSource);
+            var green = ExtractChannel(bitmap, channelIndex);
+
+            viewPanelImage.Source = BitmapToImageSource(green);
+            OnPropertyChanged();
+        }
+        
+        // https://stackoverflow.com/questions/3751715/convert-system-windows-media-imaging-bitmapsource-to-system-drawing-image
+        private Bitmap BitmapFromSource(BitmapSource bitmapsource)
+        {
+            System.Drawing.Bitmap bitmap;
+            using (MemoryStream outStream = new MemoryStream())
+            {
+                BitmapEncoder enc = new BmpBitmapEncoder();
+                enc.Frames.Add(BitmapFrame.Create(bitmapsource));
+                enc.Save(outStream);
+                bitmap = new System.Drawing.Bitmap(outStream);
+            }
+            return bitmap;
+        }
+        
+        // https://stackoverflow.com/questions/34361260/how-to-convert-icon-bitmap-to-imagesource
+        private BitmapImage BitmapToImageSource(Bitmap bitmap)
+        {
+            using (MemoryStream memory = new MemoryStream())
+            {
+                bitmap.Save(memory, ImageFormat.Bmp);
+                memory.Position = 0;
+                BitmapImage bitmapimage = new BitmapImage();
+                bitmapimage.BeginInit();
+                bitmapimage.StreamSource = memory;
+                bitmapimage.CacheOption = BitmapCacheOption.OnLoad;
+                bitmapimage.EndInit();
+
+                return bitmapimage;
+            }
+        }
+
+        private Bitmap ExtractChannel(Bitmap source, int channelIndex)
+        {
+            Bitmap result = new Bitmap(source.Width, source.Height);
+
+            // Lock the source and result Bitmaps' pixel data
+            BitmapData sourceData = source.LockBits(new Rectangle(0, 0, source.Width, source.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            BitmapData resultData = result.LockBits(new Rectangle(0, 0, result.Width, result.Height), ImageLockMode.WriteOnly,PixelFormat.Format32bppArgb);
+
+            // Get the addresses of the first pixel of the source and result Bitmaps
+            IntPtr sourcePtr = sourceData.Scan0;
+            IntPtr resultPtr = resultData.Scan0;
+
+            // Calculate the number of bytes in each row
+            int rowBytes = sourceData.Stride;
+
+            // Create a byte array to store the pixel data of one row
+            byte[] rowData = new byte[rowBytes];
+
+            for (int y = 0; y < source.Height; y++)
+            {
+                // Copy the pixel data of the current row from the source Bitmap to the rowData array
+                Marshal.Copy(sourcePtr, rowData, 0, rowBytes);
+
+                for (int x = 0; x < source.Width; x++)
+                {
+                    // Calculate the index of the current pixel in the rowData array
+                    int index = x * 4;
+
+                    // Set the values of all channels except the specified channel to 0
+                    for (int i = 0; i < 4; i++)
+                    {
+                        if (i != channelIndex)
+                        {
+                            rowData[index + i] = 0;
+                        }
+                    }
+                }
+
+                // Copy the modified pixel data of the current row from the rowData array to the result Bitmap
+                Marshal.Copy(rowData, 0, resultPtr, rowBytes);
+
+                // Move the pointers to the next row
+                sourcePtr += sourceData.Stride;
+                resultPtr += resultData.Stride;
+            }
+
+            // Unlock the source and result Bitmaps' pixel data
+            source.UnlockBits(sourceData);
+            result.UnlockBits(resultData);
+
+            return result;
+        }
+        
+        // TODO: export
+        // TODO: flip vertical
+        private void OnFlipHorizontalOnClick(object sender, RoutedEventArgs e)
+        {
+            var transform = viewPanelImage.RenderTransform as ScaleTransform;
+            if (transform == null)
+            {
+                transform = new ScaleTransform();
+            }
+            viewPanelImage.RenderTransformOrigin = new Point(0.5f, 0.5f);
+            viewPanelImage.RenderTransform = new ScaleTransform(-transform.ScaleX, 1);
+        }
+
+        
 
         private void OnBackgroundColourOnClick(object sender, RoutedEventArgs e)
         {

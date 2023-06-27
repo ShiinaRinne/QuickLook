@@ -75,6 +75,17 @@
                 </Storyboard>
             </Border.Resources>
         </Border>
+        
+        <ComboBox x:Name="channelComboBox" Width="120" Height="24" HorizontalAlignment="Right" VerticalAlignment="Top"
+                  Visibility="{Binding ElementName=imagePanel, Path=ChannelSelectVisibility}"
+                  StaysOpenOnEdit="True"
+                  Margin="0,8,72,0">
+            <ComboBoxItem Content="Default" Tag="-1" />
+            <ComboBoxItem Content="Red" Tag="2" />
+            <ComboBoxItem Content="Green" Tag="1" />
+            <ComboBoxItem Content="Blue" Tag="0" />
+            <ComboBoxItem Content="Alpha" Tag="3" />
+        </ComboBox>
 
         <Button x:Name="buttonMeta" Width="24" Height="24" Style="{StaticResource CaptionButtonStyle}"
                 HorizontalAlignment="Right" VerticalAlignment="Top"
