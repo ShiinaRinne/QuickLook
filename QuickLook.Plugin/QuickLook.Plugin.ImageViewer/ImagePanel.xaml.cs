@@ -392,7 +392,8 @@ namespace QuickLook.Plugin.ImageViewer
                     // Set the values of all channels except the specified channel to 0
                     for (int i = 0; i < 4; i++)
                     {
-                        if (i != channelIndex)
+                        // if (i != channelIndex)
+                        if (i != channelIndex && i != (int)Channel.Alpha)
                         {
                             rowData[index + i] = 0;
                         }
